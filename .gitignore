@@ -1,0 +1,19 @@
+# 真实配置 (含登录凭据) —— 绝不上传
+config.json
+
+# 模拟交易运行时数据
+trades.json
+trades.tmp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+*.swp

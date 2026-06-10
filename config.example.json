@@ -1,0 +1,33 @@
+{
+  "base_url": "https://www.sanhe6.com",
+  "dashboard_path": "/apis/api.coinscope.xhhao.com/v1alpha1/dashboards/public",
+  "cookie": "在这里粘贴你浏览器抓到的 cookie。见 README 的『获取登录凭据』一节",
+  "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+  "poll_interval_seconds": 180,
+  "server_port": 8090,
+  "alert": {
+    "enabled": false,
+    "channel": "none",
+    "telegram_token": "",
+    "telegram_chat_id": "",
+    "serverchan_sendkey": "",
+    "min_readiness": 60,
+    "watch_sections": ["entryWindow", "opportunities", "earlyEntryRadar"]
+  },
+  "trader": {
+    "enabled": true,
+    "mode": "paper",
+    "starting_balance": 1000,
+    "stake_per_trade": 100,
+    "leverage": 10,
+    "entry_sections": ["entryWindow", "opportunities"],
+    "min_readiness": 60,
+    "only_long": true,
+    "take_profit_pct": 30,
+    "stop_loss_pct": 10,
+    "exit_on_signal_gone": true,
+    "max_open_positions": 5,
+    "liquidation_buffer_pct": 0.5,
+    "reentry_cooldown_minutes": 120
+  }
+}
