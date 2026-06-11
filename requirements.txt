@@ -1,0 +1,3 @@
+# 自动抓取 Chrome cookie 所需 (cookie_grabber.py)
+# 其余功能仅用 Python 标准库
+pycryptodome>=3.20

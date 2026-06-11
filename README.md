@@ -58,15 +58,33 @@ python3 panel.py
 
 ## 获取登录凭据
 
-数据接口需要你自己的登录态。把 cookie 填进 `config.json`：
+数据接口需要你自己的登录态。有两种方式：
+
+### 方式一：自动抓取（推荐，免手动）
+
+只要你用 **Chrome** 登录过 sanhe6.com，程序能直接从 Chrome 读取 cookie，
+无需手动复制。`config.json` 里 `auto_cookie: true`（默认开启）即可：
+
+- 启动时自动抓一次
+- 运行中 cookie 失效时，自动从 Chrome 重新读取并重试
+- 面板顶部出现"🔄 刷新Cookie"按钮时，点一下也能手动触发
+
+需要安装一个依赖（用于解密 Chrome cookie）：
+
+```bash
+pip install pycryptodome    # 或: pip install -r requirements.txt
+```
+
+> cookie 失效时，先确保你在 **Chrome 浏览器里仍是登录状态**（必要时重新登录一次），
+> 程序就能自动同步到最新 cookie。
+
+### 方式二：手动填入
 
 1. 浏览器登录 sanhe6.com/coin，F12 → Network → 刷新
 2. 找到 `dashboards/public` 请求 → 右键 Copy as cURL
 3. 从里面 `-b '...'` 后面那一整段复制出来
 4. 替换 `config.json` 里的 `cookie` 字段
 5. 重启 `panel.py`
-
-cookie 过期时面板顶部会红字提示"登录失效"，重复上述步骤即可。
 
 ## 开启推送（可选）
 

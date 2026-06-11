@@ -75,6 +75,7 @@
   <span class="meta">本地更新: <b id="upd">—</b></span>
   <span class="meta">下次刷新: <b id="cd">—</b>s</span>
   <span class="err" id="err"></span>
+  <span class="vbtn" id="refresh-cookie" onclick="refreshCookie()" style="display:none">🔄 刷新Cookie</span>
   <div class="view-toggle">
     <span class="vbtn active" id="vb-signals" onclick="switchView('signals')">📡 信号面板</span>
     <span class="vbtn" id="vb-trades" onclick="switchView('trades')">🎯 AI实盘交易展示</span>
@@ -167,6 +168,9 @@ async function loadData() {
     const j = await r.json();
     document.getElementById('err').textContent = j.error || '';
     document.getElementById('upd').textContent = j.updated || '—';
+    // 登录失效时显示"刷新Cookie"按钮
+    const isLoginErr = j.error && j.error.indexOf('登录失效') >= 0;
+    document.getElementById('refresh-cookie').style.display = isLoginErr ? 'inline-block' : 'none';
     if (j.data) {
       lastData = j.data;
       document.getElementById('gen').textContent = (j.data.generatedAt||'').replace('T',' ').slice(0,19);
@@ -175,6 +179,20 @@ async function loadData() {
   } catch(e) {
     document.getElementById('err').textContent = '连接后端失败: ' + e;
   }
+}
+
+async function refreshCookie() {
+  const btn = document.getElementById('refresh-cookie');
+  btn.textContent = '🔄 抓取中...';
+  try {
+    const r = await fetch('/api/refresh-cookie');
+    const j = await r.json();
+    alert(j.ok ? ('Cookie已刷新: ' + j.msg + '\n稍候将自动重新抓取数据') : ('刷新失败: ' + j.msg + '\n\n请在 Chrome 浏览器重新登录 sanhe6.com 后再试'));
+    if (j.ok) { setTimeout(loadData, 1000); }
+  } catch(e) {
+    alert('刷新出错: ' + e);
+  }
+  btn.textContent = '🔄 刷新Cookie';
 }
 
 let cd = REFRESH;
@@ -206,15 +224,29 @@ function usdtSpan(v) {
 }
 const REASON_LABEL = {take_profit:'止盈', stop_loss:'止损', liquidation:'爆仓', signal_gone:'信号消失'};
 
+function fmtPx(v) {
+  if (v === null || v === undefined) return '—';
+  const n = Number(v);
+  return n >= 1 ? n.toFixed(4) : n.toPrecision(4);
+}
 function tradeRow(t, isOpen) {
   const side = t.side==='long'?'做多':'做空';
-  const pnl = isOpen ? t.pnl_pct : t.pnl_pct;
-  const usd = isOpen ? t.pnl_usdt : t.pnl_usdt;
+  const pnl = t.pnl_pct;
+  const usd = t.pnl_usdt;
   const status = isOpen ? '<span class="rsn open-badge">持仓中</span>'
                         : `已平仓 <span class="rsn">${REASON_LABEL[t.reason]||t.reason}</span>`;
+  // 开仓信息
+  const entryInfo = `开 ${t.opened_at||'—'} @ ${fmtPx(t.entry_price)}`;
+  // 平仓信息(持仓中显示当前价)
+  const exitInfo = isOpen
+    ? `现价 @ ${fmtPx(t.cur_price)}`
+    : `平 ${t.closed_at||'—'} @ ${fmtPx(t.exit_price)}`;
   return `<div class="trade-row">
-    <div class="tname"><b>${t.ticker}</b><small>${t.ticker} 交易复盘</small></div>
-    <div class="sub" style="flex:1">${side} <span class="lev">${t.leverage}x</span></div>
+    <div class="tname"><b>${t.ticker}</b><small>${side} <span class="lev">${t.leverage}x</span></small></div>
+    <div class="sub" style="flex:1">
+      <div>${entryInfo}</div>
+      <div>${exitInfo}</div>
+    </div>
     <div class="pct">${pctSpan(pnl)}</div>
     <div class="usdt">${usdtSpan(usd)}</div>
     <div class="status">${status}</div>

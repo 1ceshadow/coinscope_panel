@@ -34,11 +34,16 @@ def fetch_dashboard(cfg):
             raw = resp.read()
             if resp.headers.get("Content-Encoding") == "gzip":
                 raw = gzip.decompress(raw)
+            # 登录失效时服务器会 302 跳转到登录页(返回HTML)，而非报错码
+            final_url = resp.geturl()
+            ctype = resp.headers.get("Content-Type", "")
+            if "login" in final_url or "text/html" in ctype:
+                return None, "登录失效，cookie 已过期，请按 README 重新抓取并更新 config.json 里的 cookie"
             data = json.loads(raw.decode("utf-8"))
             return data, None
     except urllib.error.HTTPError as e:
         if e.code in (302, 401, 403):
-            return None, f"登录失效 (HTTP {e.code})，请更新 config.json 里的 cookie"
+            return None, "登录失效，cookie 已过期，请更新 config.json 里的 cookie"
         return None, f"HTTP错误 {e.code}: {e.reason}"
     except Exception as e:
         return None, f"抓取失败: {type(e).__name__}: {e}"

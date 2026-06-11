@@ -3,6 +3,7 @@
   "dashboard_path": "/apis/api.coinscope.xhhao.com/v1alpha1/dashboards/public",
   "cookie": "在这里粘贴你浏览器抓到的 cookie。见 README 的『获取登录凭据』一节",
   "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+  "auto_cookie": true,
   "poll_interval_seconds": 180,
   "server_port": 8090,
   "alert": {

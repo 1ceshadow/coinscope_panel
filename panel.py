@@ -18,6 +18,11 @@ from pathlib import Path
 
 import fetcher
 import paper_trader
+try:
+    import cookie_grabber
+    _HAS_GRABBER = True
+except Exception:
+    _HAS_GRABBER = False
 
 BASE = Path(__file__).parent
 
@@ -65,6 +70,23 @@ def dispatch_alert(cfg, title, text):
     return False, "未配置推送渠道"
 
 
+def try_refresh_cookie(cfg):
+    """从 Chrome 自动抓取最新 cookie 并更新到内存中的 cfg 和 config.json。"""
+    if not _HAS_GRABBER:
+        return False, "cookie_grabber 模块不可用"
+    cookie, err = cookie_grabber.grab_cookie()
+    if err:
+        return False, err
+    if cookie == cfg.get("cookie"):
+        return False, "Chrome 里的 cookie 与当前相同(可能也已失效，请在浏览器重新登录)"
+    cfg["cookie"] = cookie  # 更新内存
+    try:
+        ok, msg = cookie_grabber.refresh_config_cookie(fetcher.CONFIG_PATH)
+        return ok, msg
+    except Exception as e:
+        return True, f"内存已更新，但写回文件失败: {e}"
+
+
 def check_alerts(cfg, parsed):
     """扫描新信号，对符合条件的推送。返回推送条数。"""
     a = cfg["alert"]
@@ -105,6 +127,14 @@ def poll_loop(cfg):
     interval = cfg.get("poll_interval_seconds", 180)
     while True:
         data, err = fetcher.fetch_dashboard(cfg)
+        # 登录失效时，尝试自动从 Chrome 重新抓 cookie 并重试一次
+        if err and "登录失效" in err and cfg.get("auto_cookie", True):
+            ok, msg = try_refresh_cookie(cfg)
+            if ok:
+                print(f"[{time.strftime('%H:%M:%S')}] cookie 已自动刷新，重试抓取")
+                data, err = fetcher.fetch_dashboard(cfg)
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] 自动刷新 cookie 失败: {msg}")
         with LOCK:
             if err:
                 STATE["error"] = err
@@ -169,12 +199,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps(snap, ensure_ascii=False))
             except Exception as e:
                 self._send(200, json.dumps({"error": f"{type(e).__name__}: {e}"}))
+        elif self.path.startswith("/api/refresh-cookie"):
+            cfg = fetcher.load_config()
+            ok, msg = try_refresh_cookie(cfg)
+            self._send(200, json.dumps({"ok": ok, "msg": msg}, ensure_ascii=False))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
 
 def main():
     cfg = fetcher.load_config()
+    # 启动时若开启自动 cookie，先从 Chrome 抓一次最新登录态
+    if cfg.get("auto_cookie", True) and _HAS_GRABBER:
+        ok, msg = try_refresh_cookie(cfg)
+        print(f"自动 cookie: {msg}" if ok else f"自动 cookie 跳过: {msg}")
     # 启动时先同步拉一次，保证页面立即有数据
     print("启动中，首次抓取...")
     data, err = fetcher.fetch_dashboard(cfg)
