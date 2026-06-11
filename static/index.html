@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>三和妖币收割机 · 本地面板</title>
+<title>妖币收割机 · 本地面板</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0a0e0d; color: #d8e0dc; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 14px; }
@@ -70,7 +70,7 @@
 </head>
 <body>
 <header>
-  <h1>🎯 三和妖币收割机</h1>
+  <h1>🎯 妖币收割机</h1>
   <span class="meta">数据生成: <b id="gen">—</b></span>
   <span class="meta">本地更新: <b id="upd">—</b></span>
   <span class="meta">下次刷新: <b id="cd">—</b>s</span>
@@ -78,7 +78,7 @@
   <span class="vbtn" id="refresh-cookie" onclick="refreshCookie()" style="display:none">🔄 刷新Cookie</span>
   <div class="view-toggle">
     <span class="vbtn active" id="vb-signals" onclick="switchView('signals')">📡 信号面板</span>
-    <span class="vbtn" id="vb-trades" onclick="switchView('trades')">🎯 AI实盘交易展示</span>
+    <span class="vbtn" id="vb-trades" onclick="switchView('trades')">🎯 实盘交易 (freqtrade)</span>
   </div>
 </header>
 <div class="tabs" id="tabs"></div>
@@ -222,27 +222,43 @@ function usdtSpan(v) {
   const n = Number(v); const cls = n>=0?'pos':'neg'; const s=n>=0?'+':'';
   return `<span class="${cls}">${s}${n.toFixed(2)} USDT</span>`;
 }
-const REASON_LABEL = {take_profit:'止盈', stop_loss:'止损', liquidation:'爆仓', signal_gone:'信号消失'};
+const REASON_LABEL = {
+  take_profit:'止盈', stop_loss:'止损', liquidation:'爆仓', signal_gone:'信号消失',
+  roi:'止盈(ROI)', trailing_stop_loss:'移动止损', stoploss:'止损',
+  exit_signal:'离场信号', trend_break:'趋势破位', force_exit:'手动平仓',
+};
 
 function fmtPx(v) {
   if (v === null || v === undefined) return '—';
   const n = Number(v);
   return n >= 1 ? n.toFixed(4) : n.toPrecision(4);
 }
+function fmtTime(s) {
+  if (!s) return '—';
+  // freqtrade 返回 ISO 时间, 取 月-日 时:分
+  return String(s).replace('T',' ').slice(5,16);
+}
+function dayOf(s) { return s ? String(s).slice(0,10) : '—'; }
+
 function tradeRow(t, isOpen) {
-  const side = t.side==='long'?'做多':'做空';
-  const pnl = t.pnl_pct;
-  const usd = t.pnl_usdt;
+  const base = (t.pair||'').split('/')[0];
+  const side = t.is_short ? '做空' : '做多';
+  const lev = t.leverage || 1;
+  const pnl = isOpen
+    ? ((t.profit_pct != null) ? t.profit_pct : (t.profit_ratio != null ? t.profit_ratio*100 : 0))
+    : ((t.close_profit_abs != null) ? t.close_profit_pct
+       : (t.profit_pct != null ? t.profit_pct : 0));
+  const usd = isOpen
+    ? (t.profit_abs != null ? t.profit_abs : 0)
+    : (t.close_profit_abs != null ? t.close_profit_abs : (t.profit_abs || 0));
   const status = isOpen ? '<span class="rsn open-badge">持仓中</span>'
-                        : `已平仓 <span class="rsn">${REASON_LABEL[t.reason]||t.reason}</span>`;
-  // 开仓信息
-  const entryInfo = `开 ${t.opened_at||'—'} @ ${fmtPx(t.entry_price)}`;
-  // 平仓信息(持仓中显示当前价)
+                        : `已平仓 <span class="rsn">${REASON_LABEL[t.exit_reason]||t.exit_reason||'—'}</span>`;
+  const entryInfo = `开 ${fmtTime(t.open_date)} @ ${fmtPx(t.open_rate)}`;
   const exitInfo = isOpen
-    ? `现价 @ ${fmtPx(t.cur_price)}`
-    : `平 ${t.closed_at||'—'} @ ${fmtPx(t.exit_price)}`;
+    ? `现价 @ ${fmtPx(t.current_rate)}`
+    : `平 ${fmtTime(t.close_date)} @ ${fmtPx(t.close_rate)}`;
   return `<div class="trade-row">
-    <div class="tname"><b>${t.ticker}</b><small>${side} <span class="lev">${t.leverage}x</span></small></div>
+    <div class="tname"><b>${base}</b><small>${side} <span class="lev">${lev}x</span></small></div>
     <div class="sub" style="flex:1">
       <div>${entryInfo}</div>
       <div>${exitInfo}</div>
@@ -255,31 +271,45 @@ function tradeRow(t, isOpen) {
 
 function renderTrades(snap) {
   if (snap.error) { document.getElementById('trademain').innerHTML = `<p class="err">${snap.error}</p>`; return; }
+  const open = snap.open || [];
+  const closed = snap.closed || [];
+  const p = snap.profit || {};
+  // 浮动盈亏 = 当前持仓未实现盈亏之和
+  const floating = open.reduce((s,t)=> s + (t.profit_abs||0), 0);
+  const realized = p.profit_closed_coin != null ? p.profit_closed_coin
+                 : (p.profit_closed_abs != null ? p.profit_closed_abs : 0);
+  const totalAbs = p.profit_all_coin != null ? p.profit_all_coin
+                 : (p.profit_all_abs != null ? p.profit_all_abs : (realized + floating));
+  const totalPct = p.profit_all_percent != null ? p.profit_all_percent
+                 : (p.profit_closed_percent != null ? p.profit_closed_percent : 0);
+  const wins = p.winning_trades != null ? p.winning_trades : 0;
+  const losses = p.losing_trades != null ? p.losing_trades : 0;
+  const total = p.trade_count != null ? p.trade_count : (closed.length + open.length);
   // 汇总卡
   let html = `<div class="summary">
-    <div class="box"><div class="big">${snap.stats.total_trades}</div><div class="lbl">总交易 / 持仓中 ${snap.open.length}</div></div>
-    <div class="box"><div class="big teal">${snap.total_return_pct>=0?'+':''}${snap.total_return_pct}%</div><div class="lbl">总收益率 (权益 ${snap.equity} USDT)</div></div>
-    <div class="box"><div class="big">${snap.stats.wins}/${snap.stats.losses}</div><div class="lbl">胜/负 · 爆仓 ${snap.stats.liquidations}</div></div>
-    <div class="box"><div class="big" style="font-size:20px">${snap.realized_pnl>=0?'+':''}${snap.realized_pnl}</div><div class="lbl">已实现盈亏 USDT</div></div>
-    <div class="box"><div class="big" style="font-size:20px" class="">${snap.floating_pnl>=0?'+':''}${snap.floating_pnl}</div><div class="lbl">浮动盈亏 USDT</div></div>
+    <div class="box"><div class="big">${total}</div><div class="lbl">总交易 / 持仓中 ${open.length}</div></div>
+    <div class="box"><div class="big teal">${totalPct>=0?'+':''}${Number(totalPct).toFixed(1)}%</div><div class="lbl">总收益率 (累计 ${Number(totalAbs).toFixed(2)} USDT)</div></div>
+    <div class="box"><div class="big">${wins}/${losses}</div><div class="lbl">盈利 / 亏损 笔数</div></div>
+    <div class="box"><div class="big" style="font-size:20px">${realized>=0?'+':''}${Number(realized).toFixed(2)}</div><div class="lbl">已实现盈亏 USDT</div></div>
+    <div class="box"><div class="big" style="font-size:20px">${floating>=0?'+':''}${Number(floating).toFixed(2)}</div><div class="lbl">浮动盈亏 USDT</div></div>
   </div>`;
   // 持仓中
-  if (snap.open.length) {
-    html += `<div class="day-group"><div class="day-head"><span class="date">⚡ 当前持仓</span><span class="sum"><span class="cnt">${snap.open.length} 笔</span></span></div>`;
-    html += snap.open.map(t => tradeRow(t, true)).join('');
+  if (open.length) {
+    html += `<div class="day-group"><div class="day-head"><span class="date">⚡ 当前持仓</span><span class="sum"><span class="cnt">${open.length} 笔</span></span></div>`;
+    html += open.map(t => tradeRow(t, true)).join('');
     html += `</div>`;
   }
   // 历史按日期分组
   const groups = {};
-  snap.closed.forEach(t => { (groups[t.open_date] = groups[t.open_date]||[]).push(t); });
+  closed.forEach(t => { const d = dayOf(t.open_date); (groups[d] = groups[d]||[]).push(t); });
   const dates = Object.keys(groups).sort().reverse();
-  if (!dates.length && !snap.open.length) {
+  if (!dates.length && !open.length) {
     html += `<p class="dim" style="padding:20px 0">还没有交易记录。机器人正在后台等待信号触发，开仓后会出现在这里。</p>`;
   }
   dates.forEach(d => {
     const arr = groups[d];
-    const daySum = arr.reduce((s,t)=>s+t.pnl_usdt,0);
-    const dayPct = arr.reduce((s,t)=>s+t.pnl_pct,0);
+    const daySum = arr.reduce((s,t)=>s+(t.close_profit_abs!=null?t.close_profit_abs:(t.profit_abs||0)),0);
+    const dayPct = arr.reduce((s,t)=>s+(t.close_profit_pct!=null?t.close_profit_pct:(t.profit_pct||0)),0);
     html += `<div class="day-group"><div class="day-head">
       <span class="date">${d}</span>
       <span class="sum"><span class="cnt">${arr.length} 笔</span>${pctSpan(dayPct)} &nbsp; ${usdtSpan(daySum)}</span>

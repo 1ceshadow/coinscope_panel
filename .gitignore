@@ -1,9 +1,8 @@
 # 真实配置 (含登录凭据) —— 绝不上传
 config.json
 
-# 模拟交易运行时数据
-trades.json
-trades.tmp
+# 运行时日志
+panel.log
 
 # Python
 __pycache__/

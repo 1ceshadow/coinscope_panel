@@ -4,7 +4,7 @@
 功能:
   1. 后台定时拉取 dashboard 数据并缓存
   2. 提供本地网页面板 (实时刷新)
-  3. 检测到新的高就绪度信号时推送 (Telegram / Server酱)
+  3. 检测到新的高就绪度信号时推送 (Telegram)
 
 只用 Python 标准库。运行: python3 panel.py
 """
@@ -16,8 +16,9 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import base64
+
 import fetcher
-import paper_trader
 try:
     import cookie_grabber
     _HAS_GRABBER = True
@@ -87,6 +88,77 @@ def try_refresh_cookie(cfg):
         return True, f"内存已更新，但写回文件失败: {e}"
 
 
+def fetch_freqtrade(cfg, path):
+    """读取 freqtrade REST API。失败返回 (None, err)。"""
+    ft = cfg.get("freqtrade", {})
+    base = ft.get("api_url", "http://127.0.0.1:8080")
+    user = ft.get("username", "freqtrader")
+    pw = ft.get("password", "")
+    url = f"{base}/api/v1/{path}"
+    auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
+    req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode()), None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
+def freqtrade_snapshot(cfg):
+    """汇总 freqtrade 真实(dry-run)交易状态: 持仓、历史、盈亏、余额。"""
+    status, e1 = fetch_freqtrade(cfg, "status")        # 当前持仓列表
+    profit, e2 = fetch_freqtrade(cfg, "profit")        # 累计盈亏统计
+    balance, e3 = fetch_freqtrade(cfg, "balance")      # 账户余额
+    hist, e4 = fetch_freqtrade(cfg, "trades?limit=50")  # 已平仓历史
+    err = e1 or e2 or e3
+    if err and status is None:
+        return {"error": f"无法连接 freqtrade ({err})，请确认容器在运行且 8080 端口可达"}
+    closed = []
+    if hist and isinstance(hist, dict):
+        for t in hist.get("trades", []):
+            if t.get("is_open"):
+                continue
+            closed.append(t)
+        closed.reverse()  # 最新在前
+    return {
+        "open": status or [],
+        "closed": closed,
+        "profit": profit or {},
+        "balance": balance or {},
+    }
+
+
+def build_pairlist(cfg, parsed):
+    """把 sanhe6 入场信号转成币安期货交易对白名单 (freqtrade RemotePairList 格式)。
+
+    规则: 取 entry_sections 指定板块里、就绪度>=阈值、(可选)只做多的币，
+    转成 'ARK/USDT:USDT' 这种币安永续格式。去重并保持顺序。
+    """
+    pl = cfg.get("pairlist", {})
+    entry_secs = set(pl.get("entry_sections", ["entryWindow", "opportunities"]))
+    min_ready = pl.get("min_readiness", 60)
+    only_long = pl.get("only_long", True)
+    quote = pl.get("quote", "USDT")
+    if not parsed:
+        return []
+    seen = set()
+    pairs = []
+    for sec in parsed.get("sections", []):
+        if sec["key"] not in entry_secs:
+            continue
+        for it in sec["items"]:
+            tk = it["ticker"]
+            if not tk or tk in seen:
+                continue
+            if (it.get("readiness") or 0) < min_ready:
+                continue
+            if only_long and it.get("directionCode") == "SHORT":
+                continue
+            seen.add(tk)
+            pairs.append(f"{tk}/{quote}:{quote}")
+    return pairs
+
+
 def check_alerts(cfg, parsed):
     """扫描新信号，对符合条件的推送。返回推送条数。"""
     a = cfg["alert"]
@@ -151,18 +223,6 @@ def poll_loop(cfg):
             n = check_alerts(cfg, STATE["data"])
             if n:
                 print(f"  -> 推送了 {n} 条信号")
-            # 模拟交易引擎评估
-            try:
-                events = paper_trader.evaluate(cfg, STATE["data"])
-                for ev in events:
-                    if ev["type"] == "open":
-                        p = ev["pos"]
-                        print(f"  [开仓] {p['ticker']} {p['side']} {p['leverage']}x @ {p['entry_price']}")
-                    else:
-                        r = ev["rec"]
-                        print(f"  [平仓] {r['ticker']} {r['reason']} {r['pnl_pct']:+.1f}% ({r['pnl_usdt']:+.2f}U)")
-            except Exception as e:
-                print(f"  [交易引擎错误] {type(e).__name__}: {e}")
         time.sleep(interval)
 
 
@@ -191,11 +251,10 @@ class Handler(BaseHTTPRequestHandler):
                 }
             self._send(200, json.dumps(payload, ensure_ascii=False))
         elif self.path.startswith("/api/trades"):
+            # 读取 freqtrade 真实(dry-run)交易状态
             cfg = fetcher.load_config()
-            with LOCK:
-                parsed = STATE["data"]
             try:
-                snap = paper_trader.get_snapshot(cfg, parsed)
+                snap = freqtrade_snapshot(cfg)
                 self._send(200, json.dumps(snap, ensure_ascii=False))
             except Exception as e:
                 self._send(200, json.dumps({"error": f"{type(e).__name__}: {e}"}))
@@ -203,6 +262,15 @@ class Handler(BaseHTTPRequestHandler):
             cfg = fetcher.load_config()
             ok, msg = try_refresh_cookie(cfg)
             self._send(200, json.dumps({"ok": ok, "msg": msg}, ensure_ascii=False))
+        elif self.path.startswith("/api/pairlist"):
+            # 给 freqtrade RemotePairList 用: 把 sanhe6 入场信号转成币安期货白名单
+            cfg = fetcher.load_config()
+            with LOCK:
+                parsed = STATE["data"]
+            pairs = build_pairlist(cfg, parsed)
+            refresh = cfg.get("pairlist", {}).get("refresh_period", 300)
+            self._send(200, json.dumps({"pairs": pairs, "refresh_period": refresh},
+                                       ensure_ascii=False))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
@@ -231,7 +299,7 @@ def main():
     port = cfg.get("server_port", 8090)
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"\n面板已启动: http://127.0.0.1:{port}")
-    print(f"轮询间隔: {cfg.get('poll_interval_seconds', 180)} 秒")
+    print(f"轮询间隔: {cfg.get('poll_interval_seconds', 60)} 秒")
     print(f"推送: {'开启 (' + cfg['alert']['channel'] + ')' if cfg['alert']['enabled'] else '关闭'}")
     print("按 Ctrl+C 停止\n")
     try:

@@ -1,8 +1,26 @@
 # 三和妖币收割机 · 本地面板
 
-把你账号能看到的"妖币"榜单数据抓到本地，用网页面板实时展示，附带**模拟交易引擎**
-（自动跟随信号开/平仓，纯模拟不碰真钱）和可选的信号推送。
+把你账号能看到的"妖币"榜单数据抓到本地，用网页面板实时展示，并把入场信号
+转成 **freqtrade** 的交易对白名单，由 freqtrade 用**币安实时价格**执行交易。
+面板还能展示 freqtrade 的真实(dry-run)交易战绩，附带可选的信号推送。
 纯 Python 标准库，无需安装任何依赖。
+
+## 这套系统怎么运作
+
+```text
+sanhe6 妖币信号 (选哪些币)
+      ↓  panel 过滤: 板块 + 就绪度 + 只做多
+   /api/pairlist 白名单
+      ↓
+freqtrade (币安实时价 + SanheStrategy 二次确认)
+      ↓  开仓 / 止盈 / 止损 / 趋势破位平仓
+   真实 dry-run 交易
+      ↓
+8090 面板「实盘交易」页 (读 freqtrade 真实数据展示)
+```
+
+sanhe6 只负责**选币**（它的价格有延迟，不直接拿来下单）；freqtrade 用币安实时
+行情做**二次确认和成交**，规避了延迟问题。
 
 ## 首次配置
 
@@ -31,29 +49,38 @@ python3 panel.py
 | `config.example.json` | 配置模板（复制成 `config.json` 后填凭据） |
 | `config.json` | 你的真实配置（含凭据，已被 .gitignore 排除，不上传） |
 | `fetcher.py` | 抓取 + 解析数据（可单独运行 `python3 fetcher.py` 测试） |
-| `paper_trader.py` | 模拟交易引擎：跟随信号开/平仓、算盈亏、爆仓判定 |
-| `panel.py` | 主程序：网页服务 + 后台轮询 + 推送 + 交易引擎 |
-| `static/index.html` | 网页面板界面（信号面板 + AI实盘交易展示） |
-| `trades.json` | 模拟交易运行数据（自动生成，不上传） |
+| `cookie_grabber.py` | 从 Chrome 自动读取并解密 sanhe6 登录 cookie |
+| `panel.py` | 主程序：网页服务 + 后台轮询 + 推送 + 生成 freqtrade 白名单 + 读 freqtrade 交易 |
+| `static/index.html` | 网页面板界面（信号面板 + 实盘交易展示） |
 
 ## 面板看什么
 
 **信号面板**：顶部标签切换板块（入场窗口、确认候选、早发现雷达、OI异动…），每个币显示
 方向、阶段、价格、24h涨跌、OI 多窗口变化、资金费率、多空评分、就绪度、触发理由。
 
-**AI实盘交易展示**：模拟交易战绩——总收益率、当前持仓（实时浮盈）、按日期分组的历史记录。
+**实盘交易**：freqtrade 的真实(dry-run)交易战绩——总收益率、当前持仓（币安实时
+浮盈）、按日期分组的历史记录。数据全部来自 freqtrade 的 REST API，价格、开平仓
+时间都对应币安真实行情。
 
-## 模拟交易引擎
+## 接入 freqtrade
 
-在 `config.json` 的 `trader` 段配置（默认开启、纯模拟）：
+面板通过 `config.json` 的 `freqtrade` 段连接 freqtrade 的 REST API：
 
-- `stake_per_trade` / `leverage`：每单本金 / 杠杆
-- `take_profit_pct` / `stop_loss_pct`：止盈 / 止损线
-- `entry_sections` / `min_readiness`：哪些板块、就绪度多少才开仓
-- `exit_on_signal_gone`：信号从入场板块消失时是否平仓
+```json
+"freqtrade": {
+  "api_url": "http://127.0.0.1:8080",
+  "username": "freqtrader",
+  "password": "..."
+}
+```
 
-> ⚠️ **风险提示**：这是**模拟盘**，不连接任何交易所、不使用真钱。高杠杆下（如 10x）
-> 价格反向波动约 10% 即模拟爆仓归零。请先用模拟盘长期验证策略真实表现，
+- 面板的 `/api/pairlist` 输出当前入场白名单，供 freqtrade 的 `RemotePairList` 拉取
+- 哪些币进白名单由 `config.json` 的 `pairlist` 段控制：`entry_sections`（哪些板块）、
+  `min_readiness`（就绪度阈值）、`only_long`（只做多）
+- freqtrade 端用 `SanheStrategy` 做二次确认（EMA/RSI/突破/放量）后才真正开仓
+
+> ⚠️ **风险提示**：freqtrade 默认跑 **dry-run**（模拟盘），不碰真钱。高杠杆下（如 10x）
+> 价格反向波动约 10% 即爆仓归零。请先用 dry-run 长期验证策略真实表现，
 > 切勿凭营销截图直接用真钱交易。
 
 ## 获取登录凭据

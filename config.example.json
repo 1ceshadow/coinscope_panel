@@ -15,20 +15,16 @@
     "min_readiness": 60,
     "watch_sections": ["entryWindow", "opportunities", "earlyEntryRadar"]
   },
-  "trader": {
-    "enabled": true,
-    "mode": "paper",
-    "starting_balance": 1000,
-    "stake_per_trade": 100,
-    "leverage": 10,
+  "freqtrade": {
+    "api_url": "http://127.0.0.1:8080",
+    "username": "freqtrader",
+    "password": "在这里填 freqtrade config.json 里 api_server 的 password"
+  },
+  "pairlist": {
     "entry_sections": ["entryWindow", "opportunities"],
     "min_readiness": 60,
     "only_long": true,
-    "take_profit_pct": 30,
-    "stop_loss_pct": 10,
-    "exit_on_signal_gone": true,
-    "max_open_positions": 5,
-    "liquidation_buffer_pct": 0.5,
-    "reentry_cooldown_minutes": 120
+    "quote": "USDT",
+    "refresh_period": 300
   }
 }
